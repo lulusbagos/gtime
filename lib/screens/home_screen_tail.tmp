@@ -1,0 +1,1287 @@
+:gtime/screens/heregistrasi_screen.dart';
+import 'package:gtime/services/api_service.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+// --- PALET WARNA PREMIUM (MINING THEME) ---
+class AppColors {
+  static const Color primaryDark = Color(0xFF0D47A1); // Deep Navy
+  static const Color primaryLight = Color(0xFF1976D2);
+  static const Color accentOrange = Color(0xFFFF6F00); // Safety Orange
+  static const Color background = Color(0xFFF8F9FD);
+  static const Color textDark = Color(0xFF1A1F36);
+  static const Color textGrey = Color(0xFF697386);
+  static const LinearGradient blueGradient = LinearGradient(
+    colors: [Color(0xFF42A5F5), Color(0xFF1565C0)],
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+  );
+}
+
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
+  String? _namaLengkap;
+  String? _posisi;
+  String? _profileImageUrl;
+  List<Map<String, dynamic>> _newsBanners = [];
+  List<Map<String, dynamic>> _runningTexts = [];
+  int _unreadCount = 0;
+  final String _baseUrl = ApiService.baseUrl;
+  int _bottomNavIndex = 0;
+  int _currentCarouselIndex = 0;
+
+  late AnimationController _entranceController;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeData();
+    _entranceController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    );
+    _entranceController.forward();
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _checkAndPromptUpdate(context),
+    );
+  }
+
+  @override
+  void dispose() {
+    _entranceController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _initializeData() async {
+    await _loadUser();
+    await _loadNewsBanners();
+    await _fetchUnreadCount();
+    await _loadRunningText();
+  }
+
+  // --- LOGIC FETCH DATA ---
+  Future<void> _fetchUnreadCount() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('auth_token');
+    if (token == null) return;
+    try {
+      final response = await http
+          .get(
+            Uri.parse('$_baseUrl/notifications/unread-count'),
+            headers: {'Authorization': 'Bearer $token'},
+          )
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        setState(() => _unreadCount = data['count'] as int? ?? 0);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _loadNewsBanners() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('auth_token');
+    if (token == null) return;
+    try {
+      final response = await http
+          .get(
+            Uri.parse('$_baseUrl/news'),
+            headers: {'Authorization': 'Bearer $token'},
+          )
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode == 200) {
+        final List<dynamic> newsData = jsonDecode(response.body);
+        setState(() {
+          _newsBanners = newsData
+              .map(
+                (item) => {
+                  'title': item['title'] as String? ?? 'No Title',
+                  'subtitle': item['subtitle'] as String? ?? 'No Subtitle',
+                  'image_url': item['image_url'] as String?,
+                },
+              )
+              .toList();
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _loadRunningText() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('auth_token');
+    if (token == null) return;
+    try {
+      final response = await http
+          .get(
+            Uri.parse('$_baseUrl/api/running-text'),
+            headers: {'Authorization': 'Bearer $token'},
+          )
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        setState(() {
+          _runningTexts = data
+              .map(
+                (item) => {
+                  'id': item['id'],
+                  'text': item['text'] ?? '',
+                  'color': item['color'] ?? '#FFDD00',
+                },
+              )
+              .toList();
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _loadUser() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _namaLengkap = prefs.getString('nama_lengkap') ?? 'Guest';
+      _posisi = prefs.getString('posisi') ?? '-';
+      _profileImageUrl =
+          prefs.getString('avatar') ?? prefs.getString('profile_image_url');
+    });
+  }
+
+  Future<void> _checkAndPromptUpdate(BuildContext context) async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      final localVersion = '${info.version}+${info.buildNumber}';
+      final res = await ApiService().get('/api/app-version');
+      if (res is Map) {
+        final serverVersion = (res['version'] ?? '').toString();
+        final apkUrl = (res['apk_url'] ?? '').toString();
+        if (serverVersion.isNotEmpty &&
+            apkUrl.isNotEmpty &&
+            serverVersion.trim() != localVersion.trim()) {
+          // Logic update dialog here
+        }
+      }
+    } catch (_) {}
+  }
+
+  ImageProvider? _buildAvatarImageProvider() {
+    if (_profileImageUrl != null && _profileImageUrl!.isNotEmpty) {
+      return _profileImageUrl!.startsWith('http')
+          ? NetworkImage(_profileImageUrl!)
+          : NetworkImage('$_baseUrl$_profileImageUrl');
+    }
+    return null;
+  }
+
+  // --- NAVIGATION ---
+  void _navTo(Widget page) =>
+      Navigator.push(context, MaterialPageRoute(builder: (_) => page));
+  void _openNotifications() => _navTo(const NotificationsScreen());
+  void _openProfile() => _navTo(const ProfileScreen());
+
+  // --- UI BUILDER ---
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      bottomNavigationBar: _buildBottomNavBar(),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 40),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 1. Header (Profile & Greeting)
+              _buildAnimated(0, _buildHeader()),
+              const SizedBox(height: 20),
+
+              // 2. RUNNING TEXT (PENGUMUMAN) - BARU
+              _buildAnimated(1, AnnouncementTicker(items: _runningTexts)),
+              const SizedBox(height: 16),
+
+              // 3. STATS ROW (CUACA + JAM & NETWORK) - DIPERBAIKI
+              _buildAnimated(2, _buildStatsRow()),
+              const SizedBox(height: 16),
+
+              // 4. SHIFT INFO CARD - BARU
+              _buildAnimated(3, const CurrentShiftCard()),
+              const SizedBox(height: 24),
+
+              // 5. News Carousel
+              _buildAnimated(4, _buildNewsSection()),
+              const SizedBox(height: 32),
+
+              // 6. MAIN MENUS
+              _buildAnimated(
+                5,
+                _buildSectionTitle('Menu Utama', 'Akses Cepat'),
+              ),
+              const SizedBox(height: 16),
+              _buildAnimated(6, _buildMainMenuGrid()),
+
+              const SizedBox(height: 32),
+              _buildAnimated(
+                7,
+                _buildSectionTitle('Kekaryawanan', 'HRIS & Administrasi'),
+              ),
+              const SizedBox(height: 16),
+              _buildAnimated(8, _buildEmployeeGrid()),
+
+              const SizedBox(height: 32),
+              _buildAnimated(
+                9,
+                _buildSectionTitle('Keuangan & Fasilitas', 'Data Pribadi'),
+              ),
+              const SizedBox(height: 16),
+              _buildAnimated(10, _buildFinanceOfficeGrid()),
+
+              const SizedBox(height: 32),
+              _buildAnimated(
+                11,
+                _buildSectionTitle('Layanan Umum', 'Support & Operasional'),
+              ),
+              const SizedBox(height: 16),
+              _buildAnimated(12, _buildGeneralServicesGrid()),
+
+              const SizedBox(height: 40),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAnimated(int index, Widget child) {
+    return FadeTransition(
+      opacity: Tween<double>(begin: 0, end: 1).animate(
+        CurvedAnimation(
+          parent: _entranceController,
+          curve: Interval(index * 0.05, 1.0, curve: Curves.easeOut),
+        ),
+      ),
+      child: SlideTransition(
+        position: Tween<Offset>(begin: const Offset(0, 0.1), end: Offset.zero)
+            .animate(
+              CurvedAnimation(
+                parent: _entranceController,
+                curve: Interval(index * 0.05, 1.0, curve: Curves.easeOut),
+              ),
+            ),
+        child: child,
+      ),
+    );
+  }
+
+  Widget _buildBottomNavBar() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 20,
+            offset: const Offset(0, -5),
+          ),
+        ],
+      ),
+      child: BottomNavigationBar(
+        backgroundColor: Colors.white,
+        elevation: 0,
+        selectedItemColor: AppColors.primaryDark,
+        unselectedItemColor: Colors.grey[400],
+        type: BottomNavigationBarType.fixed,
+        currentIndex: _bottomNavIndex,
+        onTap: (index) {
+          setState(() => _bottomNavIndex = index);
+          if (index == 1) _navTo(const ScheduleScreen());
+          if (index == 2) _openNotifications();
+          if (index == 3) _openProfile();
+        },
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.dashboard_rounded),
+            label: 'Home',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.calendar_month_rounded),
+            label: 'Jadwal',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.notifications_rounded),
+            label: 'Inbox',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.person_rounded),
+            label: 'Profil',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeader() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Halo, Selamat Pagi 👋',
+                style: TextStyle(color: AppColors.textGrey, fontSize: 14),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                _namaLengkap ?? 'Loading...',
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.textDark,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              Text(
+                _posisi ?? '-',
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: AppColors.primaryDark,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+        GestureDetector(
+          onTap: _openProfile,
+          child: Container(
+            padding: const EdgeInsets.all(2),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: AppColors.primaryLight, width: 2),
+            ),
+            child: CircleAvatar(
+              radius: 24,
+              backgroundColor: Colors.grey[200],
+              backgroundImage: _buildAvatarImageProvider(),
+              child: _profileImageUrl == null
+                  ? const Icon(Icons.person, color: Colors.grey)
+                  : null,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStatsRow() {
+    return SizedBox(
+      height: 95, // Tinggi sedikit ditambah agar muat jam
+      child: Row(
+        children: const [
+          Expanded(flex: 6, child: ForecastBanner()), // Cuaca + Jam
+          SizedBox(width: 12),
+          Expanded(flex: 4, child: NetworkStatusCard()), // Sinyal + Ping
+        ],
+      ),
+    );
+  }
+
+  // --- MENU GRIDS ---
+  Widget _buildNewsSection() {
+    if (_newsBanners.isEmpty) return const SizedBox();
+    return Column(
+      children: [
+        CarouselSlider.builder(
+          itemCount: _newsBanners.length,
+          options: CarouselOptions(
+            height: 160,
+            autoPlay: true,
+            viewportFraction: 1.0,
+            onPageChanged: (index, reason) =>
+                setState(() => _currentCarouselIndex = index),
+          ),
+          itemBuilder: (context, index, _) {
+            final item = _newsBanners[index];
+            final title = (item['title'] as String?) ?? 'No Title';
+            final subtitle = (item['subtitle'] as String?) ?? '';
+            final imageUrl = (item['image_url'] as String?) ?? '';
+
+            return Container(
+              margin: const EdgeInsets.symmetric(horizontal: 4),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
+                image: DecorationImage(
+                  image: NetworkImage(
+                    imageUrl.startsWith('http')
+                        ? imageUrl
+                        : '$_baseUrl$imageUrl',
+                  ),
+                  fit: BoxFit.cover,
+                ),
+              ),
+              child: Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  gradient: LinearGradient(
+                    colors: [
+                      Colors.transparent,
+                      Colors.black.withOpacity(0.8),
+                    ],
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                  ),
+                ),
+                padding: const EdgeInsets.all(16),
+                alignment: Alignment.bottomLeft,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    if (subtitle.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        subtitle,
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 12,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: 8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: _newsBanners.asMap().entries.map((entry) {
+            return AnimatedContainer(
+              duration: const Duration(milliseconds: 300),
+              width: _currentCarouselIndex == entry.key ? 20.0 : 8.0,
+              height: 8.0,
+              margin: const EdgeInsets.symmetric(horizontal: 4.0),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(4),
+                color: _currentCarouselIndex == entry.key
+                    ? AppColors.primaryDark
+                    : Colors.grey[300],
+              ),
+            );
+          }).toList(),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSectionTitle(String title, String subtitle) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            color: AppColors.textDark,
+          ),
+        ),
+        Text(
+          subtitle,
+          style: const TextStyle(fontSize: 12, color: AppColors.textGrey),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMainMenuGrid() {
+    return Row(
+      children: [
+        Expanded(
+          flex: 5,
+          child: _HeroCard(
+            title: 'Absensi',
+            subtitle: 'Check In/Out',
+            icon: Icons.fingerprint_rounded,
+            color: AppColors.primaryDark,
+            onTap: () => _navTo(const AttendanceScreen()),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          flex: 4,
+          child: Column(
+            children: [
+              _MenuCard(
+                title: 'ATR System',
+                icon: Icons.analytics_rounded,
+                color: Colors.purple,
+                onTap: () => _navTo(const ATRScreen()),
+              ),
+              const SizedBox(height: 12),
+              _MenuCard(
+                title: 'Berita',
+                icon: Icons.newspaper_rounded,
+                color: Colors.teal,
+                onTap: () => _navTo(const NewsScreen()),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEmployeeGrid() {
+    final items = [
+      {
+        't': 'P5M',
+        'i': Icons.checklist_rtl_rounded,
+        'c': Colors.indigo,
+        'p': const P5MScreen(),
+      },
+      {
+        't': 'Smart Zone',
+        'i': Icons.school_rounded,
+        'c': Colors.pink,
+        'p': const SmartZoneScreen(),
+      },
+      {
+        't': 'ATR Pribadi',
+        'i': Icons.pie_chart_rounded,
+        'c': Colors.orange,
+        'p': const AtrPribadiChartScreen(),
+      },
+      {
+        't': 'Anniversary',
+        'i': Icons.cake_rounded,
+        'c': Colors.redAccent,
+        'p': const EmployeeAnniversaryScreen(),
+      },
+      {
+        't': 'Riwayat',
+        'i': Icons.history_rounded,
+        'c': Colors.blueGrey,
+        'p': const AttendanceHistoryScreen(),
+      },
+      {
+        't': 'Heregistrasi',
+        'i': Icons.badge_rounded,
+        'c': Colors.green,
+        'p': const HeregistrasiScreen(),
+      },
+      {
+        't': 'Tugas Saya',
+        'i': Icons.assignment_rounded,
+        'c': Colors.deepOrange,
+        'cs': true,
+      },
+      {
+        't': 'Laporan',
+        'i': Icons.summarize_rounded,
+        'c': Colors.brown,
+        'cs': true,
+      },
+    ];
+    return Wrap(
+      spacing: 16,
+      runSpacing: 16,
+      children: items
+          .map(
+            (e) => _IconMenu(
+              title: e['t'] as String,
+              icon: e['i'] as IconData,
+              color: e['c'] as Color,
+              isComingSoon: e['cs'] == true,
+              onTap: () => e['cs'] == true
+                  ? _showComingSoon()
+                  : _navTo(e['p'] as Widget),
+            ),
+          )
+          .toList(),
+    );
+  }
+
+  Widget _buildFinanceOfficeGrid() {
+    final items = [
+      {'t': 'Payslip', 'i': Icons.receipt_long_rounded, 'c': Colors.green},
+      {'t': 'Pinjaman', 'i': Icons.monetization_on_rounded, 'c': Colors.amber},
+      {'t': 'Ruangan', 'i': Icons.meeting_room_rounded, 'c': Colors.blue},
+      {'t': 'Kendaraan', 'i': Icons.directions_car_rounded, 'c': Colors.red},
+    ];
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: items
+          .map(
+            (e) => _IconMenu(
+              title: e['t'] as String,
+              icon: e['i'] as IconData,
+              color: e['c'] as Color,
+              isComingSoon: true,
+              onTap: _showComingSoon,
+            ),
+          )
+          .toList(),
+    );
+  }
+
+  Widget _buildGeneralServicesGrid() {
+    final items = [
+      {
+        't': 'Helpdesk',
+        'i': Icons.support_agent_rounded,
+        'c': Colors.blueAccent,
+      },
+      {'t': 'Reimburse', 'i': Icons.attach_money_rounded, 'c': Colors.green},
+      {
+        't': 'Dinas Luar',
+        'i': Icons.flight_takeoff_rounded,
+        'c': Colors.orangeAccent,
+      },
+      {'t': 'Kantin', 'i': Icons.restaurant_rounded, 'c': Colors.pinkAccent},
+      {'t': 'Tamu', 'i': Icons.qr_code_rounded, 'c': Colors.purpleAccent},
+      {'t': 'Directory', 'i': Icons.contacts_rounded, 'c': Colors.teal},
+    ];
+    return Wrap(
+      spacing: 20,
+      runSpacing: 20,
+      alignment: WrapAlignment.start,
+      children: items
+          .map(
+            (e) => _IconMenu(
+              title: e['t'] as String,
+              icon: e['i'] as IconData,
+              color: e['c'] as Color,
+              isComingSoon: true,
+              onTap: _showComingSoon,
+            ),
+          )
+          .toList(),
+    );
+  }
+
+  void _showComingSoon() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text(
+          "Fitur ini akan segera hadir dalam update berikutnya.",
+        ),
+        backgroundColor: AppColors.textDark,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+  }
+}
+
+// ==========================================
+// --- CUSTOM WIDGETS ---
+// ==========================================
+
+// 1. Tombol Bounce
+class _BounceButton extends StatefulWidget {
+  final Widget child;
+  final VoidCallback onTap;
+  const _BounceButton({required this.child, required this.onTap});
+  @override
+  State<_BounceButton> createState() => _BounceButtonState();
+}
+
+class _BounceButtonState extends State<_BounceButton>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 100),
+      vsync: this,
+      lowerBound: 0.9,
+      upperBound: 1.0,
+    )..value = 1.0;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTapDown: (_) => _controller.reverse(),
+      onTapUp: (_) {
+        _controller.forward();
+        widget.onTap();
+      },
+      onTapCancel: () => _controller.forward(),
+      child: ScaleTransition(scale: _controller, child: widget.child),
+    );
+  }
+}
+
+// 2. Kartu Besar & Menu
+class _HeroCard extends StatelessWidget {
+  final String title, subtitle;
+  final IconData icon;
+  final Color color;
+  final VoidCallback onTap;
+  const _HeroCard({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.color,
+    required this.onTap,
+  });
+  @override
+  Widget build(BuildContext context) {
+    return _BounceButton(
+      onTap: onTap,
+      child: Container(
+        height: 160,
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: color.withOpacity(0.4),
+              blurRadius: 10,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.2),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: Colors.white, size: 32),
+            ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                Text(
+                  subtitle,
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MenuCard extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  final Color color;
+  final VoidCallback onTap;
+  const _MenuCard({
+    required this.title,
+    required this.icon,
+    required this.color,
+    required this.onTap,
+  });
+  @override
+  Widget build(BuildContext context) {
+    return _BounceButton(
+      onTap: onTap,
+      child: Container(
+        height: 74,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.grey.withOpacity(0.1),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: color, size: 28),
+            const SizedBox(width: 12),
+            Text(
+              title,
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _IconMenu extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  final Color color;
+  final bool isComingSoon;
+  final VoidCallback onTap;
+  const _IconMenu({
+    required this.title,
+    required this.icon,
+    required this.color,
+    required this.onTap,
+    this.isComingSoon = false,
+  });
+  @override
+  Widget build(BuildContext context) {
+    return _BounceButton(
+      onTap: onTap,
+      child: Column(
+        children: [
+          Stack(
+            children: [
+              Container(
+                width: 56,
+                height: 56,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: Colors.grey.shade100),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.grey.withOpacity(0.05),
+                      blurRadius: 8,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Icon(
+                  icon,
+                  color: isComingSoon ? Colors.grey.shade400 : color,
+                  size: 26,
+                ),
+              ),
+              if (isComingSoon)
+                Positioned(
+                  right: 0,
+                  top: 0,
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade200,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.lock_rounded,
+                      color: Colors.grey,
+                      size: 10,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: 60,
+            child: Text(
+              title,
+              style: TextStyle(
+                fontSize: 11,
+                color: isComingSoon ? Colors.grey : AppColors.textDark,
+                fontWeight: FontWeight.w500,
+              ),
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// 3. Network Card (Live Ping Simulation)
+class NetworkStatusCard extends StatefulWidget {
+  const NetworkStatusCard({super.key});
+  @override
+  State<NetworkStatusCard> createState() => _NetworkStatusCardState();
+}
+
+class _NetworkStatusCardState extends State<NetworkStatusCard>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _blinkController;
+  // Dummy connectivity for visual
+  bool isOnline = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _blinkController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 1),
+    )..repeat(reverse: true);
+    // Di real app, gunakan connectivity_plus StreamSubscription di sini
+  }
+
+  @override
+  void dispose() {
+    _blinkController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.1),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                isOnline ? Icons.wifi : Icons.wifi_off_rounded,
+                color: isOnline ? Colors.green : Colors.red,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                isOnline ? "Online" : "Offline",
+                style: TextStyle(
+                  color: isOnline ? Colors.green[700] : Colors.red,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                ),
+              ),
+              const Spacer(),
+              if (isOnline)
+                FadeTransition(
+                  opacity: _blinkController,
+                  child: Container(
+                    width: 8,
+                    height: 8,
+                    decoration: const BoxDecoration(
+                      color: Colors.green,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: Colors.grey[50],
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.grey[200]!),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  "Ping: 24ms",
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: Colors.grey,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  "Secure",
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: Colors.blue[700],
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// 4. Forecast Banner + Realtime Clock
+class ForecastBanner extends StatelessWidget {
+  const ForecastBanner({super.key});
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: AppColors.blueGradient,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF1565C0).withOpacity(0.3),
+            blurRadius: 12,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Text(
+                '28°C',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 26,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Row(
+                children: const [
+                  Icon(Icons.location_on, color: Colors.white70, size: 12),
+                  SizedBox(width: 4),
+                  Text(
+                    'Lokasi Saya',
+                    style: TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          // Jam Digital
+          StreamBuilder(
+            stream: Stream.periodic(const Duration(seconds: 1)),
+            builder: (context, snapshot) {
+              final now = DateTime.now();
+              final time =
+                  "${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}";
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    time,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1,
+                    ),
+                  ),
+                  Text(
+                    "WITA",
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// 5. Shift Info Card
+class CurrentShiftCard extends StatelessWidget {
+  const CurrentShiftCard({super.key});
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.grey.shade100),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.green.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(Icons.wb_sunny_rounded, color: Colors.green),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  "Jadwal Hari Ini",
+                  style: TextStyle(color: Colors.grey, fontSize: 12),
+                ),
+                const Text(
+                  "Shift Pagi (Office)",
+                  style: TextStyle(
+                    color: AppColors.textDark,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                  ),
+                ),
+                const Text(
+                  "08:00 - 17:00",
+                  style: TextStyle(
+                    color: AppColors.primaryDark,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: AppColors.primaryDark,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: const Text(
+              "Active",
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// 6. Running Text
+class AnnouncementTicker extends StatelessWidget {
+  final List<Map<String, dynamic>> items;
+
+  const AnnouncementTicker({super.key, required this.items});
+
+  Color _parseColor(String? hex) {
+    if (hex == null || hex.isEmpty) return AppColors.accentOrange;
+    var value = hex.replaceAll('#', '');
+    if (value.length == 6) value = 'FF';
+    try {
+      return Color(int.parse(value, radix: 16));
+    } catch (_) {
+      return AppColors.accentOrange;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (items.isEmpty) return const SizedBox.shrink();
+
+    final texts = items
+        .map((e) => (e['text'] ?? '').toString())
+        .where((t) => t.trim().isNotEmpty)
+        .toList();
+    if (texts.isEmpty) return const SizedBox.shrink();
+
+    final mergedText = texts.join('   �   ');
+    final barColor = _parseColor(items.first['color']?.toString());
+
+    return Container(
+      width: double.infinity,
+      height: 40,
+      clipBehavior: Clip.hardEdge,
+      decoration: BoxDecoration(
+        color: barColor.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: barColor.withOpacity(0.3)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            color: barColor,
+            height: double.infinity,
+            alignment: Alignment.center,
+            child: const Icon(
+              Icons.campaign_rounded,
+              color: Colors.white,
+              size: 20,
+            ),
+          ),
+          Expanded(
+            child: ClipRect(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Center(
+                    child: Text(
+                      mergedText,
+                      style: const TextStyle(
+                        color: AppColors.textDark,
+                        fontWeight: FontWeight.w500,
+                        fontSize: 13,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.visible,
+                      softWrap: false,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+
+

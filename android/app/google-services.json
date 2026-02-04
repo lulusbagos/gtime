@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "662094009904",
+    "project_id": "gtime-298ce",
+    "storage_bucket": "gtime-298ce.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:662094009904:android:420918da7bff2ea1d33ff5",
+        "android_client_info": {
+          "package_name": "gtime.indexim"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCDDTVC46QrasDuPHkEOv7taV5PQKjSaIk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
